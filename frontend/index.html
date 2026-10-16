@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TaskFlow</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 520px; margin: 40px auto; padding: 0 16px; }
+    input, button { padding: 8px; margin: 4px 0; font-size: 15px; }
+    input { width: 100%; box-sizing: border-box; }
+    li { display: flex; gap: 8px; align-items: center; margin: 6px 0; }
+    li.done span { text-decoration: line-through; color: #888; }
+    .hidden { display: none; }
+    #msg { color: #b00020; }
+  </style>
+</head>
+<body>
+  <h1>TaskFlow</h1>
+  <p id="msg"></p>
+
+  <section id="auth">
+    <input id="email" type="email" placeholder="Email">
+    <input id="password" type="password" placeholder="Password (min 6)">
+    <button onclick="login()">Login</button>
+    <button onclick="register()">Register</button>
+  </section>
+
+  <section id="app" class="hidden">
+    <button onclick="logout()">Logout</button>
+    <input id="title" placeholder="New task title">
+    <button onclick="addTask()">Add</button>
+    <ul id="list"></ul>
+  </section>
+
+  <script>
+    let token = localStorage.getItem("token");
+    const $ = (id) => document.getElementById(id);
+
+    async function api(path, options = {}) {
+      const headers = { ...(options.headers || {}) };
+      if (token) headers["Authorization"] = "Bearer " + token;
+      const res = await fetch(path, { ...options, headers });
+      if (res.status === 401 && token) { logout(); return null; }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(typeof err.detail === "string" ? err.detail : "Request failed");
+      }
+      return res.status === 204 ? null : res.json();
+    }
+
+    function show() {
+      $("auth").classList.toggle("hidden", !!token);
+      $("app").classList.toggle("hidden", !token);
+      if (token) loadTasks();
+    }
+
+    async function register() {
+      try {
+        await api("/auth/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: $("email").value, password: $("password").value }),
+        });
+        await login();
+      } catch (e) { $("msg").textContent = e.message; }
+    }
+
+    async function login() {
+      try {
+        const body = new URLSearchParams({ username: $("email").value, password: $("password").value });
+        const data = await api("/auth/login", { method: "POST", body });
+        token = data.access_token;
+        localStorage.setItem("token", token);
+        $("msg").textContent = "";
+        show();
+      } catch (e) { $("msg").textContent = e.message; }
+    }
+
+    function logout() {
+      token = null;
+      localStorage.removeItem("token");
+      show();
+    }
+
+    async function loadTasks() {
+      const tasks = await api("/tasks");
+      if (!tasks) return;
+      $("list").innerHTML = "";
+      for (const t of tasks) {
+        const li = document.createElement("li");
+        if (t.done) li.className = "done";
+        const cb = document.createElement("input");
+        cb.type = "checkbox"; cb.checked = t.done; cb.style.width = "auto";
+        cb.onchange = () => toggle(t.id, cb.checked);
+        const span = document.createElement("span");
+        span.textContent = t.title;      // textContent => XSS safe
+        const del = document.createElement("button");
+        del.textContent = "x"; del.onclick = () => removeTask(t.id);
+        li.append(cb, span, del);
+        $("list").appendChild(li);
+      }
+    }
+
+    async function addTask() {
+      const title = $("title").value.trim();
+      if (!title) return;
+      await api("/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title }),
+      });
+      $("title").value = "";
+      loadTasks();
+    }
+
+    async function toggle(id, done) {
+      await api("/tasks/" + id, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ done }),
+      });
+      loadTasks();
+    }
+
+    async function removeTask(id) { await api("/tasks/" + id, { method: "DELETE" }); loadTasks(); }
+
+    show();
+  </script>
+</body>
+</html>
